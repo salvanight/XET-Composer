@@ -1,0 +1,108 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+/**
+ * @title TokenVesting
+ * @dev A token holder contract that can release its token balance gradually like a
+ * typical vesting scheme, with a cliff and vesting period. Tokens are released linearly.
+ * This contract is designed to hold a specific ERC20 token.
+ */
+contract TokenVesting is Ownable, ReentrancyGuard {
+    IERC20 public immutable token;
+
+    address public immutable beneficiary;
+    uint256 public immutable start_time;
+    uint256 public immutable cliff_duration;
+    uint256 public immutable duration; // Total vesting duration
+
+    uint256 public released;
+
+    /**
+     * @dev Creates a vesting contract that vests tokens gradually to a beneficiary.
+     * @param _token_address The address of the ERC20 token being vested.
+     * @param _beneficiary The address of the beneficiary of the vested tokens.
+     * @param _start_time The timestamp when the vesting period begins.
+     * @param _cliff_duration Duration in seconds of the cliff period from the start time.
+     * @param _duration Total duration in seconds of the vesting period from the start time.
+     * @param _initial_owner The address that will own this vesting contract.
+     */
+    constructor(
+        address _token_address,
+        address _beneficiary,
+        uint256 _start_time,
+        uint256 _cliff_duration,
+        uint256 _duration,
+        address _initial_owner
+    ) Ownable(_initial_owner) {
+        require(_token_address != address(0), "TokenVesting: token address cannot be zero");
+        require(_beneficiary != address(0), "TokenVesting: beneficiary cannot be zero");
+        require(_duration > 0, "TokenVesting: duration must be > 0");
+        require(_cliff_duration <= _duration, "TokenVesting: cliff must be <= duration");
+        require(_start_time >= block.timestamp, "TokenVesting: start time must be >= current time");
+
+        token = IERC20(_token_address);
+        beneficiary = _beneficiary;
+        start_time = _start_time;
+        cliff_duration = _cliff_duration;
+        duration = _duration;
+    }
+
+    /**
+     * @dev Returns the amount of tokens that can be released at the current time.
+     */
+    function releasable_amount() public view returns (uint256) {
+        return _vested_amount(block.timestamp) - released;
+    }
+
+    /**
+     * @dev Releases the vested tokens to the beneficiary.
+     */
+    function release() public nonReentrant {
+        uint256 amount_to_release = releasable_amount();
+        require(amount_to_release > 0, "TokenVesting: no tokens are due");
+
+        released += amount_to_release;
+        
+        // Transfer the tokens. Ensure this contract has enough balance.
+        // It's assumed tokens are transferred to this contract separately.
+        require(token.transfer(beneficiary, amount_to_release), "TokenVesting: token transfer failed");
+    }
+
+    /**
+     * @dev Calculates the amount of tokens that have vested at a given time.
+     * @param _timestamp The timestamp to check vesting for.
+     * @return The amount of tokens vested.
+     */
+    function _vested_amount(uint256 _timestamp) internal view returns (uint256) {
+        uint256 total_balance = token.balanceOf(address(this)) + released; // Total tokens ever held for this vesting schedule
+
+        if (_timestamp < start_time + cliff_duration) {
+            return 0;
+        }
+        if (_timestamp >= start_time + duration) {
+            return total_balance;
+        }
+        
+        // Linear vesting calculation
+        // vested = (total_balance * (time_passed - cliff_duration)) / (total_duration - cliff_duration)
+        // but here, we calculate based on total duration from start
+        // vested = total_balance * (time_passed) / total_duration
+        // time_passed is relative to start_time
+        return (total_balance * (_timestamp - start_time)) / duration;
+    }
+
+    // Tera template placeholders (these will be replaced by the backend)
+    // Note: Actual constructor parameters are used above for _beneficiary, _start_time etc.
+    // These comments are just to remind of the Tera variables expected by the template engine
+    // if we were to inject them directly into arbitrary parts of the contract body (which we are not doing for constructor).
+    // Beneficiary: {{ beneficiary }}
+    // Start Time: {{ start_time }}
+    // Cliff Duration: {{ cliff_duration }}
+    // Duration: {{ duration }}
+    // Token Address: {{ token_address }}
+    // Initial Owner: {{ initial_owner }} // Added for Ownable
+}
