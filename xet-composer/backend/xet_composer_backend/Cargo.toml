@@ -15,3 +15,4 @@ tokio = { version = "1.30", features = ["full"] } # Using 1.30 as per instructio
 hex = "0.4"
 solang-parser = "0.3"
 tempfile = "3" # Added for deploy_engine.rs
+chrono = { version = "0.4", features = ["serde"] }
