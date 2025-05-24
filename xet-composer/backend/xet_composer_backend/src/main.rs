@@ -2,15 +2,18 @@ use axum::{routing::post, Router, Json};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::env; // Added for env::var
+use std::env;
+use chrono::Utc; // Added for timestamp
 
-// Existing module declarations
+// Module declarations
 mod sol_template_engine;
 mod deploy_engine;
+mod artifact_manager; // Added module
 
 // Use statements for our modules
 use sol_template_engine::{SolTemplateEngine, TemplateError};
-use deploy_engine::{DeployEngine, CompilationOutput, DeployError};
+use deploy_engine::{DeployEngine, CompiledArtifact, DeployError};
+// artifact_manager is used via its functions
 
 #[derive(Deserialize, Debug)]
 struct DeployRequest {
@@ -18,27 +21,53 @@ struct DeployRequest {
     params: serde_json::Value,
 }
 
+// Updated DeployResult struct
 #[derive(Serialize, Debug)]
 struct DeployResult {
     success: bool,
     message: String,
     contract_name: Option<String>,
-    contract_address: Option<String>, // Still simulated for now
+    contract_address: Option<String>, // Remains simulated for now
     abi: Option<serde_json::Value>,
     bytecode: Option<String>,
+    compilation_timestamp: Option<u64>, // New field
+    artifact_path: Option<String>,     // New field
 }
 
 async fn deploy_handler(Json(payload): Json<DeployRequest>) -> Json<DeployResult> {
     println!("Received deploy request for contract template: {}", payload.contract);
     println!("Params: {:?}", payload.params);
 
+    // --- Conceptual Placeholder for Pre-flight/KYC Checks ---
+    // Here, you might add checks before proceeding with resource-intensive operations.
+    // For example, check for a required user signature or other parameters.
+    /*
+    let perform_kyc_check = false; // Make this true to simulate the check
+    if perform_kyc_check {
+        if payload.params.get("user_signature").is_none() || 
+           payload.params.get("legal_name").is_none() {
+            println!("Pre-flight check failed: Missing required KYC parameters (e.g., user_signature, legal_name).");
+            return Json(DeployResult {
+                success: false,
+                message: "Pre-flight check failed: Missing required KYC parameters.".to_string(),
+                contract_name: None,
+                contract_address: None,
+                abi: None,
+                bytecode: None,
+                compilation_timestamp: None,
+                artifact_path: None,
+            });
+        }
+        println!("Pre-flight/KYC check passed (simulated).");
+    }
+    */
+    // --- End of Placeholder ---
+
     // --- Configuration ---
-    let contracts_base_dir = PathBuf::from("../../contracts") // Relative to executable in target/debug or if run from workspace root
+    let contracts_base_dir = PathBuf::from("../../contracts")
         .canonicalize()
         .unwrap_or_else(|e| {
-            eprintln!("Failed to canonicalize contracts_base_dir: {:?}. Using relative path.", e);
-            // Fallback: if canonicalize fails (e.g. dir doesn't exist yet in test env),
-            // provide a relative path. This might be okay if solc handles it.
+            eprintln!("Warning: could not canonicalize contracts path '../../contracts': {}. Using relative path.", e);
             PathBuf::from("../../contracts")
         });
     
@@ -49,13 +78,9 @@ async fn deploy_handler(Json(payload): Json<DeployRequest>) -> Json<DeployResult
     
     let solc_remappings = vec![
         "@openzeppelin/contracts/=lib/openzeppelin-repo/contracts/".to_string(),
-        // Example: "ds-test/=lib/forge-std/lib/ds-test/src/"
     ];
     println!("Using SOLC remappings: {:?}", solc_remappings);
 
-
-    // Initialize engines
-    // SolTemplateEngine expects the path to the directory containing .sol.tera files.
     let template_engine = match SolTemplateEngine::new(contracts_base_dir.clone()) {
         Ok(engine) => engine,
         Err(e) => {
@@ -67,13 +92,14 @@ async fn deploy_handler(Json(payload): Json<DeployRequest>) -> Json<DeployResult
                 contract_address: None,
                 abi: None,
                 bytecode: None,
+                compilation_timestamp: None, // New field
+                artifact_path: None,         // New field
             });
         }
     };
 
     let deploy_engine = DeployEngine::new(solc_executable.clone());
 
-    // 1. Render the Solidity template
     let rendered_solidity = match template_engine.render_template(&payload.contract, &payload.params) {
         Ok(code) => code,
         Err(e) => {
@@ -85,25 +111,52 @@ async fn deploy_handler(Json(payload): Json<DeployRequest>) -> Json<DeployResult
                 contract_address: None,
                 abi: None,
                 bytecode: None,
+                compilation_timestamp: None, // New field
+                artifact_path: None,         // New field
             });
         }
     };
 
     let contract_name_to_compile = payload.contract.replace(".sol.tera", "");
 
-    // 2. Compile the rendered Solidity
-    // Pass the contracts_base_dir as the base_path for solc.
     match deploy_engine.compile_solidity(&rendered_solidity, &contract_name_to_compile, &contracts_base_dir, &solc_remappings) {
-        Ok(comp_output) => {
-            println!("Compilation successful for {}", contract_name_to_compile);
+        Ok(compiled_artifact) => {
+            println!("Compilation successful for {}", compiled_artifact.contract_name);
+            
+            let current_timestamp = Utc::now().timestamp() as u64;
+            let base_deployments_dir = PathBuf::from("../../deployments")
+                .canonicalize()
+                .unwrap_or_else(|e| {
+                    eprintln!("Warning: could not canonicalize deployments path '../../deployments': {}. Using relative path './deployments'.", e);
+                    PathBuf::from("./deployments") // Fallback to current dir's deployments
+                });
+
+            let mut success_message = format!("Contract '{}' compiled successfully.", compiled_artifact.contract_name);
+            let artifact_file_path_str: Option<String> = 
+                match artifact_manager::save_artifact(&compiled_artifact, &base_deployments_dir, current_timestamp) {
+                Ok(path) => {
+                    let path_str = path.to_string_lossy().into_owned();
+                    println!("Artifact saved to: {}", path_str);
+                    success_message = format!("Contract '{}' compiled successfully. Artifact saved.", compiled_artifact.contract_name);
+                    Some(path_str)
+                }
+                Err(e) => {
+                    eprintln!("Failed to save artifact for {}: {:?}", compiled_artifact.contract_name, e);
+                    success_message = format!("Contract '{}' compiled successfully, but failed to save artifact: {:?}", compiled_artifact.contract_name, e);
+                    None
+                }
+            };
+            
             // Deployment is still simulated.
             Json(DeployResult {
                 success: true,
-                message: format!("Contract '{}' compiled successfully (deployment simulated).", contract_name_to_compile),
-                contract_name: Some(contract_name_to_compile),
-                contract_address: Some("0xSIMULATED_ADDRESS_AFTER_COMPILE_AND_REMAP".to_string()), // Updated placeholder
-                abi: Some(comp_output.abi),
-                bytecode: Some(comp_output.bytecode),
+                message: success_message, // Updated message
+                contract_name: Some(compiled_artifact.contract_name.clone()), 
+                contract_address: Some("0xSIMULATED_ADDRESS_AFTER_COMPILE".to_string()), // Still simulated
+                abi: Some(compiled_artifact.abi.clone()),
+                bytecode: Some(compiled_artifact.bytecode.clone()),
+                compilation_timestamp: Some(current_timestamp), // Populate new field
+                artifact_path: artifact_file_path_str,       // Populate new field
             })
         }
         Err(e) => {
@@ -121,6 +174,8 @@ async fn deploy_handler(Json(payload): Json<DeployRequest>) -> Json<DeployResult
                 contract_address: None,
                 abi: None,
                 bytecode: None,
+                compilation_timestamp: None, // New field
+                artifact_path: None,         // New field
             })
         }
     }

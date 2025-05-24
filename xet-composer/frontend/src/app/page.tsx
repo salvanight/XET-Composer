@@ -175,7 +175,7 @@ export default function VestingPage() {
             type="submit"
             className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-800 transition duration-150 ease-in-out"
           >
-            Deploy Vesting Contract
+            Compile Vesting Contract
           </button>
         </form>
 
@@ -197,6 +197,16 @@ export default function VestingPage() {
                   </a>
                 </p>
                 <p className="text-sm text-gray-300 mt-1">Message: {deployedContractInfo.message}</p>
+                {deployedContractInfo.compilation_timestamp && (
+                  <p className="text-sm text-gray-300 mt-1">
+                    Compilation Timestamp: {new Date(deployedContractInfo.compilation_timestamp * 1000).toLocaleString()}
+                  </p>
+                )}
+                {deployedContractInfo.artifact_path && (
+                  <p className="text-sm text-gray-300 mt-1">
+                    Artifact Saved To: {deployedContractInfo.artifact_path}
+                  </p>
+                )}
                 <div className="mt-2">
                   <p className="text-sm font-medium text-gray-300">ABI:</p>
                   <pre className="text-xs bg-gray-600 p-2 rounded-md text-gray-200 whitespace-pre-wrap break-all">
