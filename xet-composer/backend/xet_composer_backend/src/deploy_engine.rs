@@ -37,8 +37,9 @@ pub struct DeployEngine {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompilationOutput {
-    pub abi: Value,
+pub struct CompiledArtifact {
+    pub contract_name: String,
+    pub abi: String,
     pub bytecode: String, // Hex string of bytecode
 }
 
@@ -54,7 +55,7 @@ impl DeployEngine {
         contract_name: &str,
         base_path: &Path, // New parameter
         remappings: &[String], // New parameter: e.g., "@openzeppelin/=lib/openzeppelin/"
-    ) -> Result<CompilationOutput, DeployError> {
+    ) -> Result<CompiledArtifact, DeployError> {
         let mut temp_sol_file = NamedTempFile::new()?; // Handled by From<std::io::Error>
         temp_sol_file.write_all(solidity_source.as_bytes())?;
         let temp_sol_path = temp_sol_file.path();
@@ -100,10 +101,9 @@ impl DeployEngine {
         let bytecode_hex = fs::read_to_string(&bin_file_path)
             .map_err(|e| DeployError::NoBytecodeFound(format!("Could not read BIN file {:?}: {}", bin_file_path, e)))?;
          
-        let abi_json: Value = serde_json::from_str(&abi_str)?; // Handled by From<serde_json::Error>
-
-        Ok(CompilationOutput {
-            abi: abi_json,
+        Ok(CompiledArtifact {
+            contract_name: contract_name.to_string(),
+            abi: abi_str,
             bytecode: bytecode_hex.trim().to_string(),
         })
     }
@@ -111,7 +111,7 @@ impl DeployEngine {
     /// Placeholder for deploying a compiled contract.
     pub async fn deploy_contract(
         &self,
-        _abi: Value,
+        _abi: String, // Changed from Value to String
         _bytecode: String,
         _constructor_args: Option<Value>,
     ) -> Result<String, DeployError> {
@@ -146,10 +146,11 @@ contract MyContract is Context {
 
     match engine.compile_solidity(source_code, "MyContract", &base_contracts_dir, &remappings) {
         Ok(comp_output) => {
-            println!("ABI: {}", comp_output.abi.to_string());
+            println!("Contract Name: {}", comp_output.contract_name);
+            println!("ABI: {}", comp_output.abi); // abi is now a String
             println!("Bytecode: {}", comp_output.bytecode);
             
-            match engine.deploy_contract(comp_output.abi, comp_output.bytecode, None).await {
+            match engine.deploy_contract(comp_output.abi.clone(), comp_output.bytecode.clone(), None).await { // Clone if needed, or adjust ownership
                 Ok(address) => println!("Deployed to: {}", address),
                 Err(e) => eprintln!("Deployment error: {:?}", e),
             }
